@@ -8,6 +8,18 @@
 *.so
 *.dylib
 
+# misc project
+.DS_Store
+.env
+.env.*
+__pycache__/
+*.pyc
+**/commands.txt
+
+# CLI
+bin/
+dist/
+
 # Test binary, built with `go test -c`
 *.test
 
