@@ -26,7 +26,7 @@ import (
 	"github.com/instaclustr/insta-cli/internal/state"
 )
 
-var Version = "0.0.1"
+var Version = "0.0.4"
 
 type App struct {
 	In             io.Reader
@@ -36,6 +36,7 @@ type App struct {
 	ConfirmFunc    func(string) error
 	PlatformClient *platform.OpenSearch
 	DataClient     *http.Client
+	SummaryClient  *http.Client
 	CodingCLI      coding.CodingCLI
 	Source         *bootstrap.Source
 	reader         *bufio.Reader
@@ -70,6 +71,10 @@ func New(in io.Reader, out, errOut io.Writer) *App {
 	return &App{In: in, Out: out, Err: errOut, Executable: exe}
 }
 func (a *App) Execute(ctx context.Context, args []string) int {
+	// Diagnostics stay on stderr so --json and piped command results retain
+	// their existing stdout contract. This also covers help and parse errors,
+	// which Cobra handles before PersistentPreRun.
+	fmt.Fprintf(a.Err, "insta CLI v%s\n", Version)
 	root := a.Command()
 	root.SetArgs(args)
 	root.SetIn(a.In)
@@ -93,12 +98,32 @@ func (a *App) Execute(ctx context.Context, args []string) int {
 	return 0
 }
 func (a *App) Command() *cobra.Command {
-	r := &cobra.Command{Use: "insta", Short: "Learn, run, and build from Instaclustr labs", SilenceUsage: true, SilenceErrors: true, CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true}}
+	r := &cobra.Command{
+		Use: "insta", Short: "Build and run Instaclustr AI labs",
+		Long: "insta creates a working project from an Instaclustr AI lab, prepares its\n" +
+			"services, and runs guided exercises. Explore retrieval and agent workflows,\n" +
+			"then adapt the project to your own use case.\n\n" +
+			"Start a lab:\n" +
+			"  1. insta lab list\n" +
+			"  2. insta new my-rag --lab rag-retrieval\n" +
+			"  3. cd my-rag\n" +
+			"  4. insta config\n" +
+			"  5. insta up\n\n" +
+			"Explore and run:\n" +
+			"  insta task list                         Browse exercises and operations\n" +
+			"  insta task start baseline-vector-rag     Prepare an exercise's services\n" +
+			"  insta task run baseline-vector-rag ingest\n" +
+			"  insta exec                              Ask questions with Codex\n\n" +
+			"Clean up:\n" +
+			"  insta down                              Remove this stack's owned resources",
+		SilenceUsage: true, SilenceErrors: true,
+		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
+	}
 	r.PersistentFlags().BoolVar(&a.JSON, "json", false, "Write structured command results to stdout")
 	r.PersistentFlags().BoolVar(&a.Yes, "yes", false, "Confirm the displayed action without prompting")
 	r.PersistentPreRun = func(cmd *cobra.Command, args []string) { a.command = cmd.CommandPath() }
 	r.AddCommand(&cobra.Command{Use: "version", Short: "Show the CLI version", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		return a.Result(map[string]any{"version": Version}, "insta "+Version)
+		return a.Result(map[string]any{"version": Version}, Version)
 	}})
 	a.addCatalog(r)
 	a.addNew(r)

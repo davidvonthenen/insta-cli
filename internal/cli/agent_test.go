@@ -31,6 +31,9 @@ func agentWrite(t *testing.T, root, relative, contents string) {
 
 func agentFixture(t *testing.T) *session {
 	t.Helper()
+	// Ordinary execution fixtures must never contact a hosted model. Summary
+	// integration tests opt in explicitly and supply a local HTTP fixture.
+	t.Setenv("INSTA_SUMMARY_ENABLED", "false")
 	root := t.TempDir()
 	for p, text := range map[string]string{
 		"AGENTS.md":                       "Read source before running declared commands.\n",
@@ -69,7 +72,7 @@ func agentFixture(t *testing.T) *session {
 		t.Fatal(err)
 	}
 	var output, diagnostic bytes.Buffer
-	return &session{Root: root, Project: p, Manifest: m, Values: map[string]string{"agent.backend": "codex", "OPENAI_API_KEY": "fixture-secret"}, Redactor: runner.NewRedactor([]string{"fixture-secret"}), App: &App{In: strings.NewReader(""), Out: &output, Err: &diagnostic}}
+	return &session{Root: root, Project: p, Manifest: m, Values: map[string]string{"agent.backend": "codex", "OPENAI_API_KEY": "fixture-secret", "summary.enabled": "false"}, Redactor: runner.NewRedactor([]string{"fixture-secret"}), App: &App{In: strings.NewReader(""), Out: &output, Err: &diagnostic}}
 }
 
 type agentFakeCoding struct {

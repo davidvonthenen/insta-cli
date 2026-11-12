@@ -12,26 +12,14 @@ import (
 	"github.com/instaclustr/insta-cli/internal/coding"
 	"github.com/instaclustr/insta-cli/internal/manifest"
 	"github.com/instaclustr/insta-cli/internal/state"
-	"github.com/instaclustr/insta-cli/internal/templates"
 	"github.com/spf13/cobra"
 )
 
 func (a *App) addCatalog(root *cobra.Command) {
 	lab := &cobra.Command{Use: "lab", Short: "Select the template for a future project"}
-	lab.AddCommand(&cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	lab.AddCommand(&cobra.Command{Use: "list", Short: "Browse available labs and their learning goals", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		items := bootstrap.Catalog()
-		var lines []string
-		lines = append(lines, "Welcome to the `insta` CLI!")
-		lines = append(lines, "Would you like to explore or modify one of the Instaclustr labs?")
-		lines = append(lines, "Please choose a lab from the list below:")
-		lines = append(lines, " ")
-		lines = append(lines, "Lab ID\t\tLab Description")
-		lines = append(lines, "---\t\t---")
-		for _, x := range items {
-			lines = append(lines, x.ID+"\t"+x.Name)
-		}
-		lines = append(lines, "\n")
-		return a.Result(items, strings.Join(lines, "\n"))
+		return a.Result(items, formatLabList(items))
 	}})
 	lab.AddCommand(&cobra.Command{Use: "select <lab>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		l, e := bootstrap.Lookup(args[0])
@@ -110,25 +98,26 @@ func (a *App) addNew(root *cobra.Command) {
 		}
 		var p *state.Project
 		e = bootstrap.CopyLab(snapshot, lab, destination, func(stage string) error {
-			if e := templates.Apply(stage, lab.ID); e != nil {
-				return e
-			}
+			// The repository owns the complete lab contract and implementation.
+			// Validate that source before publishing any managed project state.
 			m, h, e := manifest.Load(stage)
 			if e != nil {
-				return e
+				return fmt.Errorf("lab %q from %s is not ready for insta: %w; update the lab's insta.yaml and referenced files in labs-mirror, then retry", lab.ID, snapshot.Provenance.Origin, e)
 			}
-			b, e := json.Marshal(snapshot.Provenance)
-			if e != nil {
-				return e
+			if m.ID != lab.ID {
+				return fmt.Errorf("lab %q from %s declares manifest id %q; update its insta.yaml in labs-mirror to match the selected lab", lab.ID, snapshot.Provenance.Origin, m.ID)
 			}
-			origin := map[string]string{}
-			if e = json.Unmarshal(b, &origin); e != nil {
-				return e
+			origin := map[string]string{
+				"origin":      snapshot.Provenance.Origin,
+				"ref_type":    snapshot.Provenance.RefType,
+				"ref":         snapshot.Provenance.Ref,
+				"commit":      snapshot.Provenance.Commit,
+				"source_path": snapshot.Provenance.SourcePath,
+				"sha256":      snapshot.Provenance.SHA256,
+				"cli_version": Version,
 			}
-			origin["cli_version"] = Version
-			origin["overlay_sha256"], e = templates.Digest(lab.ID)
-			if e != nil {
-				return e
+			if snapshot.Provenance.OfflineCache {
+				origin["offline_cache"] = "true"
 			}
 			p, e = state.New(lab.ID, origin)
 			if e != nil {

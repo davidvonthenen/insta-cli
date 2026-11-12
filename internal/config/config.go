@@ -35,6 +35,24 @@ func Definitions(m *manifest.Manifest) map[string]Definition {
 	d["agent.backend"] = Definition{Definition: manifest.Definition{Default: "codex", Enum: []string{"codex", "claude-code"}, Description: "Coding CLI for lab prompts and interactive sessions (claude-code is an unimplemented stub)"}, Env: "INSTA_AGENT_BACKEND"}
 	d["assistant.api_key"] = Definition{Definition: manifest.Definition{Secret: true, Description: "Separate OpenAI API credential for optional limited assistance"}, Env: "INSTA_ASSISTANT_API_KEY"}
 	d["assistant.model"] = Definition{Definition: manifest.Definition{Description: "OpenAI Responses model for optional limited assistance"}, Env: "INSTA_ASSISTANT_MODEL"}
+	d["summary.enabled"] = Definition{Definition: manifest.Definition{Type: "boolean", Default: "true", Description: "Explain task operations before and after execution using the configured OpenAI model"}, Env: "INSTA_SUMMARY_ENABLED"}
+	d["summary.provider"] = Definition{Definition: manifest.Definition{Default: "auto", Enum: []string{"auto", "openai", "anthropic", "claude"}, Description: "Task summary provider: OpenAI is implemented; anthropic/claude are reserved placeholders; auto follows the configured lab provider"}, Env: "INSTA_SUMMARY_PROVIDER"}
+	d["summary.model"] = Definition{Definition: manifest.Definition{Description: "OpenAI task summary model; defaults to OPENAI_MODEL"}, Env: "INSTA_SUMMARY_MODEL"}
+	d["summary.api_key"] = Definition{Definition: manifest.Definition{Secret: true, Description: "Optional dedicated OpenAI task summary API credential"}, Env: "INSTA_SUMMARY_API_KEY"}
+	d["summary.base_url"] = Definition{Definition: manifest.Definition{Description: "Optional task summary API base URL; a changed endpoint requires a dedicated summary.api_key"}, Env: "INSTA_SUMMARY_BASE_URL"}
+	d["summary.timeout_seconds"] = Definition{Definition: manifest.Definition{Type: "integer", Default: "20", Description: "Maximum time for each task summary request (1-60 seconds)"}, Env: "INSTA_SUMMARY_TIMEOUT_SECONDS"}
+	// Retain these reserved settings for configuration compatibility and secret
+	// redaction. Claude summaries are not implemented; a lab may still declare
+	// and use Anthropic settings independently in its own application.
+	for key, def := range map[string]manifest.Definition{
+		"ANTHROPIC_API_KEY":  {Secret: true, Description: "Reserved Anthropic credential; Claude task summaries are not implemented"},
+		"ANTHROPIC_MODEL":    {Description: "Reserved Claude model; Claude task summaries are not implemented"},
+		"ANTHROPIC_BASE_URL": {Description: "Reserved Anthropic API base URL; Claude task summaries are not implemented"},
+	} {
+		if _, declared := d[key]; !declared {
+			d[key] = Definition{Definition: def, Env: key}
+		}
+	}
 	return d
 }
 
@@ -117,6 +135,12 @@ func Validate(key, v string, d Definition) error {
 	if key == "OPENSEARCH_HOST" && (strings.Contains(v, "://") || strings.ContainsAny(v, "/@?# ")) {
 		return fmt.Errorf("OPENSEARCH_HOST must be a hostname without scheme, path, or credentials")
 	}
+	if key == "summary.timeout_seconds" {
+		seconds, _ := strconv.Atoi(v)
+		if seconds < 1 || seconds > 60 {
+			return fmt.Errorf("summary.timeout_seconds must be between 1 and 60")
+		}
+	}
 	return nil
 }
 func Require(values map[string]string, keys ...string) error {
@@ -146,6 +170,11 @@ func TaskEnvironment(m *manifest.Manifest, values map[string]string, root, venv 
 		}
 		if strings.HasPrefix(k, "INSTACLUSTR_PROVISION_") || strings.HasPrefix(k, "INSTA_") {
 			continue
+		}
+		if k == "ANTHROPIC_API_KEY" || k == "ANTHROPIC_MODEL" || k == "ANTHROPIC_BASE_URL" {
+			if _, declared := m.Config[k]; !declared {
+				continue
+			}
 		}
 		env[k] = v
 	}

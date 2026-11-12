@@ -38,10 +38,10 @@ To install the latest `insta` release, run the following (see full [installation
 curl -fsSL https://get.instaclustr.com/ | sh
 ```
 
-For the **optional, but highly recommended** AI-guided lab setup, provisioning, and declared task operations work, install either:
+For the **optional, but highly recommended** guided exploration through `insta exec`, install either:
 
 - the [Codex CLI](https://developers.openai.com/codex/cli/) and authenticate with `codex login`.
-- the [Claude Code CLI](https://claude.com/product/claude-code) and authenticate with `codex login`.
+- the [Claude Code CLI](https://claude.com/product/claude-code) and authenticate with `claude login`.
 
 ### 2. Find a lab and create a project
 
@@ -61,6 +61,7 @@ To provision an Instaclustr-managed cluster, provide your **Instaclustr provisio
 export INSTACLUSTR_PROVISION_USERNAME="<your-Instaclustr-username>"
 export INSTACLUSTR_PROVISION_API_KEY="<your-provisioning-API-key>"
 export OPENAI_API_KEY="<your-OpenAI-API-key>"
+# OR export ANTHROPIC_API_KEY="<your-Claude-API-key>"
 
 insta config
 ```

@@ -22,15 +22,16 @@ var DefaultRepository = Repository{
 }
 
 type Lab struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	SourcePath string `json:"source_path"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SourcePath  string `json:"source_path"`
 }
 
 func Catalog() []Lab {
 	return []Lab{
-		{ID: "rag-retrieval", Name: "RAG Retrieval", SourcePath: "rag-retrieval"},
-		{ID: "agentic-rag", Name: "Agentic RAG", SourcePath: "agentic-rag"},
+		{ID: "rag-retrieval", Name: "RAG Retrieval", Description: "Compare vector, keyword, and hybrid search in OpenSearch. Add metadata filters, reranking, governance, and operational checks to a RAG application.", SourcePath: "rag-retrieval"},
+		{ID: "agentic-rag", Name: "Agentic RAG", Description: "Build news and financial specialists, connect live tools through MCP, and route requests through an orchestrator with evidence and audit trails.", SourcePath: "agentic-rag"},
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/instaclustr/insta-cli/internal/coding"
 	"github.com/spf13/cobra"
@@ -42,8 +43,15 @@ func (a *App) addExec(root *cobra.Command) {
 	c := &cobra.Command{
 		Use:   "exec [-p message | -i [instruction]]",
 		Short: "Chat in the lab, submit a prompt, or open the Codex terminal",
-		Long:  "Without an instruction, read one prompt per line and continue the conversation until /quit, /exit, or EOF. Use -p for one response or -i with an optional initial instruction for the native Codex terminal.",
-		Args:  cobra.MaximumNArgs(1),
+		Long: "Work with Codex in the current lab project using its declared task instructions and configured environment.\n\n" +
+			"Modes:\n" +
+			"  insta exec                  Continue a conversation, one message per line.\n" +
+			"  insta exec -p \"message\"     Print one response and return to your shell.\n" +
+			"  insta exec -i               Open the native Codex terminal.\n\n" +
+			"Use --task to focus the conversation on an exercise. The default conversation\n" +
+			"ends with /quit, /exit, or EOF. Session details and progress go to stderr;\n" +
+			"assistant responses go to stdout.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if a.JSON {
 				return failure("usage", 2, errors.New("insta exec does not support --json"))
@@ -86,14 +94,60 @@ func (a *App) addExec(root *cobra.Command) {
 	root.AddCommand(c)
 }
 
+// Session context is diagnostic output: piping a one-shot answer must never
+// capture headings, progress, or completion notices as part of that answer.
+func (s *session) describeExec(adapter coding.CodingCLI, options execOptions, req coding.SessionRequest) {
+	mode, guidance := "conversation", "Enter one message per line; /quit, /exit, or EOF ends this session."
+	switch options.mode {
+	case execPrompt:
+		mode, guidance = "one-shot", "Submit one prompt, print the response, and return to your shell."
+	case execInteractive:
+		mode, guidance = "native terminal", "Opening the Codex terminal. Exit Codex to return to your shell."
+	}
+	task, profile := req.TaskID, req.Profile
+	if task == "" {
+		task = "whole lab"
+	}
+	if profile == "" {
+		profile = "default"
+	}
+	for _, line := range []string{
+		fmt.Sprintf("Session: %s | mode: %s", adapter.Name(), mode),
+		fmt.Sprintf("Project: %s | lab: %s | stack: %s", s.Root, s.Project.Lab, s.Project.SelectedStack),
+		fmt.Sprintf("Context: %s | profile: %s", task, profile),
+		guidance,
+	} {
+		fmt.Fprintln(s.App.Err, s.execDisplay(line))
+	}
+	if options.approve {
+		fmt.Fprintln(s.App.Err, "Approval: declared task effects are preapproved for this project and stack.")
+	}
+}
+
+func (s *session) execDisplay(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s.redactAgent(text))
+}
+
 func (s *session) runPrompt(ctx context.Context, adapter coding.CodingCLI, req coding.SessionRequest, thread string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if thread == "" {
+		fmt.Fprintln(s.App.Err, "Working on your request...")
+	} else {
+		fmt.Fprintln(s.App.Err, "Continuing the conversation...")
+	}
 	if errFile, ok := s.App.Err.(*os.File); ok && term.IsTerminal(int(errFile.Fd())) {
 		stop := make(chan struct{})
 		finished := make(chan struct{})
-		fmt.Fprintln(errFile, "Thinking…")
 		go func() {
 			defer close(finished)
-			ticker := time.NewTicker(10 * time.Second)
+			ticker := time.NewTicker(15 * time.Second)
 			defer ticker.Stop()
 			start := time.Now()
 			for {
@@ -101,7 +155,7 @@ func (s *session) runPrompt(ctx context.Context, adapter coding.CodingCLI, req c
 				case <-stop:
 					return
 				case <-ticker.C:
-					fmt.Fprintf(errFile, "Codex is still working (%s)…\n", time.Since(start).Round(time.Second))
+					fmt.Fprintf(errFile, "Still working (%s elapsed)...\n", time.Since(start).Round(time.Second))
 				}
 			}
 		}()
@@ -130,15 +184,13 @@ func (s *session) promptLoop(ctx context.Context, adapter coding.CodingCLI, req 
 	}
 	input := bufio.NewReader(in)
 	terminal := isTTY(s.App.In)
-	if terminal {
-		fmt.Fprintln(s.App.Err, "Codex lab session. Enter a message, or type /quit to leave.")
-	}
 	var thread string
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if terminal {
+			fmt.Fprint(s.App.Err, " ")
 			fmt.Fprint(s.App.Err, "insta> ")
 		}
 		line, err := readExecLine(input)
@@ -165,6 +217,9 @@ func (s *session) promptLoop(ctx context.Context, adapter coding.CodingCLI, req 
 		}
 		if err != nil {
 			fmt.Fprintln(s.App.Err, "Error:", s.redactAgent(err.Error()))
+			if terminal {
+				fmt.Fprintln(s.App.Err, "Enter another message to retry, or /quit to leave.")
+			}
 			continue
 		}
 		thread = next

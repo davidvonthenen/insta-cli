@@ -49,16 +49,23 @@ printf 'unexpected fake Python invocation\n' >&2
 exit 74
 `
 
+const bootstrapFixtureCommit = "c321a65c9586706d8696645327e28b07f6b78b77"
+
 func bootstrapHarness(t *testing.T) (*App, *bytes.Buffer, *bytes.Buffer, string, *int) {
 	t.Helper()
 	archivePath := os.Getenv("INSTA_TEST_SOURCE_ARCHIVE")
 	if archivePath == "" {
-		t.Skip("set INSTA_TEST_SOURCE_ARCHIVE for complete pinned-source CLI bootstrap fixtures")
+		t.Skip("set INSTA_TEST_SOURCE_ARCHIVE for a complete repository archive containing both labs and their insta.yaml contracts")
 	}
 	archive, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return bootstrapHarnessWithArchive(t, archive)
+}
+
+func bootstrapHarnessWithArchive(t *testing.T, archive []byte) (*App, *bytes.Buffer, *bytes.Buffer, string, *int) {
+	t.Helper()
 	base := t.TempDir()
 	t.Chdir(base)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(base, "user-config"))
@@ -88,6 +95,7 @@ func bootstrapHarness(t *testing.T) (*App, *bytes.Buffer, *bytes.Buffer, string,
 	a := New(strings.NewReader(""), &output, &diagnostic)
 	a.CodingCLI = &agentFakeCoding{readiness: coding.Readiness{State: coding.Missing, Diagnostic: "fixture Codex executable is missing"}}
 	requests := 0
+	ownerRepo := strings.TrimPrefix(bootstrap.DefaultRepository.Origin, "https://github.com/")
 	a.Source = &bootstrap.Source{
 		Repository: bootstrap.DefaultRepository,
 		CacheDir:   filepath.Join(base, "user-cache", "insta", "sources"),
@@ -96,9 +104,9 @@ func bootstrapHarness(t *testing.T) (*App, *bytes.Buffer, *bytes.Buffer, string,
 				t.Errorf("unexpected source method: %s", r.Method)
 			}
 			switch r.URL.String() {
-			case "https://api.github.com/repos/instaclustr/insta-cli/commits/heads/main":
-				_, _ = io.WriteString(w, `{"sha":"c321a65c9586706d8696645327e28b07f6b78b77"}`)
-			case "https://codeload.github.com/instaclustr/insta-cli/zip/c321a65c9586706d8696645327e28b07f6b78b77":
+			case "https://api.github.com/repos/" + ownerRepo + "/commits/heads/main":
+				_, _ = io.WriteString(w, `{"sha":"`+bootstrapFixtureCommit+`"}`)
+			case "https://codeload.github.com/" + ownerRepo + "/zip/" + bootstrapFixtureCommit:
 				requests++
 				_, _ = w.Write(archive)
 			default:
@@ -131,8 +139,11 @@ func TestNewFromPinnedArchiveCreatesManagedProjectWithoutCodex(t *testing.T) {
 			if len(p.Stack().Platforms) != 0 || len(p.Stack().Services) != 0 || len(p.Stack().Operations) != 0 {
 				t.Fatal("new provisioned resources or ran a teaching task")
 			}
-			if p.Source["origin"] != bootstrap.DefaultRepository.Origin || p.Source["commit"] != "c321a65c9586706d8696645327e28b07f6b78b77" || p.Source["ref_type"] != "heads" || p.Source["ref"] != "main" || len(p.Source["sha256"]) != 64 || len(p.Source["overlay_sha256"]) != 64 {
-				t.Fatal("source and overlay provenance missing")
+			if p.Source["origin"] != bootstrap.DefaultRepository.Origin || p.Source["commit"] != bootstrapFixtureCommit || p.Source["ref_type"] != "heads" || p.Source["ref"] != "main" || len(p.Source["sha256"]) != 64 || p.Source["cli_version"] != Version {
+				t.Fatal("repository source provenance missing")
+			}
+			if _, exists := p.Source["overlay_sha256"]; exists {
+				t.Fatal("new project recorded removed overlay provenance")
 			}
 			for _, relative := range []string{"AGENTS.md", "insta.yaml", "insta.schema.json", "INSTA.md", ".env", ".insta/venvs/dev/bin/python"} {
 				if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
@@ -147,9 +158,8 @@ func TestNewFromPinnedArchiveCreatesManagedProjectWithoutCodex(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(root, ".agents/skills/instaclustr-rag-builder/SKILL.md")); err != nil {
 					t.Fatal("hidden agent instructions missing", err)
 				}
-				info, err := os.Lstat(filepath.Join(root, "scripts/baseline-vector-rag/src/common"))
-				if err != nil || info.Mode()&os.ModeSymlink == 0 {
-					t.Fatal("shared source symlink was not preserved", err)
+				if _, err := os.Stat(filepath.Join(root, "scripts/baseline-vector-rag/src/common/config.py")); err != nil {
+					t.Fatal("shared source is unavailable", err)
 				}
 				if !strings.HasSuffix(p.Stack().Config["OPENSEARCH_VECTOR_RECIPES_BASELINE_INDEX"], "-"+p.ID[:8]+"-dev") {
 					t.Fatal("stack index default was not scoped")
