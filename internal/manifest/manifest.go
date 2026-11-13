@@ -63,6 +63,9 @@ type Conditional struct {
 	Required   []string          `yaml:"required" json:"required"`
 }
 type Task struct {
+	Name        string               `yaml:"name,omitempty" json:"name,omitempty"`
+	Description string               `yaml:"description,omitempty" json:"description,omitempty"`
+	Order       int                  `yaml:"order,omitempty" json:"order,omitempty"`
 	Blueprint   string               `yaml:"blueprint" json:"blueprint"`
 	Source      string               `yaml:"source" json:"source"`
 	Services    []string             `yaml:"services,omitempty" json:"services,omitempty"`
@@ -228,6 +231,9 @@ func (m *Manifest) Validate(root string) error {
 	for name, t := range m.Tasks {
 		if !nameRE.MatchString(name) {
 			return fmt.Errorf("invalid task id %q", name)
+		}
+		if t.Order < 0 {
+			return fmt.Errorf("task %s order must not be negative", name)
 		}
 		if _, e := Path(root, t.Blueprint, false); e != nil {
 			return e

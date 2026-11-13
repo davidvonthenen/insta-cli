@@ -67,7 +67,7 @@ func (s *session) Exec(ctx context.Context, options execOptions) error {
 		req := coding.SessionRequest{
 			Workspace: s.Root, Instructions: s.Manifest.Instructions,
 			Instruction: s.redactAgent(instruction), TaskID: taskID, Blueprint: blueprint,
-			Environment:     config.TaskEnvironment(s.Manifest, s.Values, s.Root, runner.Venv(s.Root, s.Project.SelectedStack)),
+			Environment:     config.CodingEnvironment(s.Manifest, s.Values, s.Root, runner.Venv(s.Root, s.Project.SelectedStack)),
 			InstaExecutable: s.App.Executable, Stdout: s.App.Out, Stderr: s.App.Err, Profile: options.profile,
 		}
 		if options.approve {
@@ -76,16 +76,28 @@ func (s *session) Exec(ctx context.Context, options execOptions) error {
 				return err
 			}
 		}
+		s.describeExec(adapter, options, req)
 		if options.mode == execInteractive {
 			req.Stdin = s.App.In
-			return codingExit(adapter.RunInteractive(ctx, req))
+			err := codingExit(adapter.RunInteractive(ctx, req))
+			if err == nil {
+				fmt.Fprintln(s.App.Err, "Codex terminal closed.")
+			}
+			return err
 		}
 		if options.mode == execPrompt {
 			req.OneShot = true
 			_, err := s.runPrompt(ctx, adapter, req, "")
+			if err == nil {
+				fmt.Fprintln(s.App.Err, "Response complete.")
+			}
 			return err
 		}
-		return s.promptLoop(ctx, adapter, req)
+		err := s.promptLoop(ctx, adapter, req)
+		if err == nil {
+			fmt.Fprintln(s.App.Err, "Conversation ended.")
+		}
+		return err
 	}
 	if readiness.Diagnostic != "" {
 		fmt.Fprintln(s.App.Err, s.redactAgent(readiness.Diagnostic))

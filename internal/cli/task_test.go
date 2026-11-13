@@ -15,7 +15,6 @@ import (
 	"github.com/instaclustr/insta-cli/internal/manifest"
 	"github.com/instaclustr/insta-cli/internal/runner"
 	"github.com/instaclustr/insta-cli/internal/state"
-	"github.com/instaclustr/insta-cli/internal/templates"
 	"gopkg.in/yaml.v3"
 )
 
@@ -236,20 +235,16 @@ func TestTaskChangedManifestRequiresRenewedApproval(t *testing.T) {
 
 func TestTaskReadOnlyPolicyRegistryNeedsNoCloudCredentials(t *testing.T) {
 	s := agentFixture(t)
-	b, err := templates.Manifest("rag-retrieval")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var realManifest manifest.Manifest
-	if err := yaml.Unmarshal(b, &realManifest); err != nil {
-		t.Fatal(err)
-	}
-	operation, ok := realManifest.Tasks["operationalize-production"].Operations["policy-registry"]
-	if !ok {
-		t.Fatal("bundled policy-registry operation missing")
-	}
 	task := s.Manifest.Tasks["example"]
-	task.Operations = map[string]manifest.Operation{"policy-registry": operation}
+	// Exercise the CLI's local-read contract independently of any bundled lab.
+	// The repository supplies the actual policy implementation and its metadata.
+	task.Operations = map[string]manifest.Operation{
+		"policy-registry": {
+			Command:      []string{"python", "-m", "src.policy_registry"},
+			Effects:      []string{"local-read"},
+			Verification: "Configured thresholds match the checked-in policy history.",
+		},
+	}
 	s.Manifest.Tasks["example"] = task
 	s.Values["OPENAI_API_KEY"] = ""
 	t.Setenv("INSTACLUSTR_PROVISION_USERNAME", "")

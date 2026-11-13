@@ -147,7 +147,7 @@ func TestRejectDeclaredOversizedArchive(t *testing.T) {
 }
 
 func TestCopyLabAtomicAndSeparate(t *testing.T) {
-	root, err := extractFixture(t, fixtureFile{"repo/rag/AGENTS.md", "source", 0644}, fixtureFile{"repo/rag/common/config.py", "shared", 0644}, fixtureFile{"repo/rag/src/common", "../common", os.ModeSymlink | 0777})
+	root, err := extractFixture(t, fixtureFile{"repo/rag/AGENTS.md", "source", 0644}, fixtureFile{"repo/rag/insta.yaml", "id: rag\n", 0644}, fixtureFile{"repo/rag/common/config.py", "shared", 0644}, fixtureFile{"repo/rag/src/common", "../common", os.ModeSymlink | 0777})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +155,15 @@ func TestCopyLabAtomicAndSeparate(t *testing.T) {
 	lab := Lab{ID: "rag", SourcePath: "rag"}
 	dest := filepath.Join(t.TempDir(), "my-rag")
 	if err := CopyLab(snapshot, lab, dest, func(stage string) error {
-		return os.WriteFile(filepath.Join(stage, "insta.yaml"), []byte("id: rag"), 0644)
+		if err := os.Mkdir(filepath.Join(stage, ".insta"), 0700); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(stage, ".insta/project.json"), []byte(`{"initialized":true}`), 0600)
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "insta.yaml")); err != nil || string(b) != "id: rag\n" {
+		t.Fatal("repository manifest was not preserved", err)
 	}
 	os.WriteFile(filepath.Join(dest, "AGENTS.md"), []byte("edited"), 0644)
 	b, _ := os.ReadFile(filepath.Join(root, "rag/AGENTS.md"))
@@ -171,8 +177,8 @@ func TestCopyLabAtomicAndSeparate(t *testing.T) {
 	if err := CopyLab(snapshot, lab, dest, nil); err == nil {
 		t.Fatal("overwrote existing project")
 	}
-	if err := CopyLab(snapshot, lab, filepath.Join(t.TempDir(), "failed"), func(string) error { return errors.New("overlay rejected") }); err == nil {
-		t.Fatal("ignored overlay failure")
+	if err := CopyLab(snapshot, lab, filepath.Join(t.TempDir(), "failed"), func(string) error { return errors.New("initialization rejected") }); err == nil {
+		t.Fatal("ignored initialization failure")
 	}
 	outside, err := extractFixture(t, fixtureFile{"repo/rag/x", "../other", os.ModeSymlink | 0777}, fixtureFile{"repo/other/y", "shared", 0644})
 	if err != nil {

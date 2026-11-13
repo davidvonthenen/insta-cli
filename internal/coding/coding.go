@@ -176,7 +176,7 @@ func (c *Codex) diagnostic(ctx context.Context, executable string, args ...strin
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.WaitDelay = time.Second
-	cmd.Env = SanitizeEnvironment(os.Environ())
+	cmd.Env = diagnosticEnvironment(os.Environ())
 	var out limitedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
@@ -351,6 +351,22 @@ func SanitizeEnvironment(env []string) []string {
 	result := make([]string, 0, len(keys))
 	for _, key := range keys {
 		result = append(result, key+"="+values[key])
+	}
+	return result
+}
+
+// Version and stored-login probes do not execute lab tasks. Keep task summary
+// settings and Anthropic credentials out of these diagnostic subprocesses even
+// though a real coding session may need them for nested insta commands.
+func diagnosticEnvironment(env []string) []string {
+	result := []string{}
+	for _, entry := range SanitizeEnvironment(env) {
+		key, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if strings.HasPrefix(upper, "INSTA_SUMMARY_") || strings.HasPrefix(upper, "SUMMARY.") || upper == "ANTHROPIC_API_KEY" || upper == "ANTHROPIC_MODEL" || upper == "ANTHROPIC_BASE_URL" {
+			continue
+		}
+		result = append(result, entry)
 	}
 	return result
 }

@@ -23,18 +23,13 @@ import (
 )
 
 func (a *App) addTasks(root *cobra.Command) {
-	tasks := &cobra.Command{Use: "task", Short: "Run complete teaching exercises through their declared operations"}
-	tasks.AddCommand(&cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	tasks := &cobra.Command{Use: "task", Short: "Explore lab exercises and run their declared operations"}
+	tasks.AddCommand(&cobra.Command{Use: "list", Short: "Show exercises, learning goals, and available operations", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		return a.withSession(cmd.Context(), false, func(s *session) error {
-			lines := []string{}
-			for _, name := range manifest.Keys(s.Manifest.Tasks) {
-				t := s.Manifest.Tasks[name]
-				lines = append(lines, fmt.Sprintf("%s\n  blueprint: %s\n  operations: %s\n  platforms: %s; services: %s", name, t.Blueprint, strings.Join(manifest.Keys(t.Operations), ", "), strings.Join(t.Requires.Platforms, ", "), strings.Join(append(append([]string{}, t.Requires.Services...), t.Services...), ", ")))
-			}
-			return a.Result(s.Manifest.Tasks, strings.Join(lines, "\n"))
+			return a.Result(s.Manifest.Tasks, formatTaskList(s))
 		})
 	}})
-	tasks.AddCommand(&cobra.Command{Use: "start <task>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	tasks.AddCommand(&cobra.Command{Use: "start <task>", Short: "Select an exercise and start its required services", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.withSession(cmd.Context(), true, func(s *session) error {
 			t, ok := s.Manifest.Tasks[args[0]]
 			if !ok {
@@ -61,8 +56,29 @@ func (a *App) addTasks(root *cobra.Command) {
 			return a.Result(map[string]string{"task": args[0], "blueprint": t.Blueprint}, "Selected "+args[0]+". Read "+t.Blueprint+"; use insta task run to execute an operation.")
 		})
 	}})
-	tasks.AddCommand(&cobra.Command{Use: "run <task> <operation>", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	var noSummary bool
+	run := &cobra.Command{Use: "run <task> [operation]", Short: "Explain, execute, and summarize one declared task operation", Long: `Run one operation from the selected lab's task manifest. Model summaries explain
+the planned work and interpret the recorded result. The task's exit code and
+verification evidence remain authoritative.
+
+Omit the operation only when the task declares exactly one. Configure summary.*
+with insta config, or use --no-summary for feedback without model calls.`, Example: "  insta task run baseline-vector-rag ingest\n  insta task run baseline-vector-rag query\n  insta task run setup-environment\n  insta task run baseline-vector-rag validate --no-summary", Args: cobra.RangeArgs(1, 2), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.withSession(cmd.Context(), true, func(s *session) error {
+			task, ok := s.Manifest.Tasks[args[0]]
+			if !ok {
+				return unknownTask(args[0])
+			}
+			operation := ""
+			if len(args) == 2 {
+				operation = args[1]
+			} else if len(task.Operations) == 1 {
+				operation = manifest.Keys(task.Operations)[0]
+			} else {
+				return failure("usage", 2, fmt.Errorf("choose an operation for %s: %s; use insta task run %s <operation>", args[0], strings.Join(operationNames(task), ", "), args[0]))
+			}
+			if noSummary {
+				s.Values["summary.enabled"] = "false"
+			}
 			if inherited := os.Getenv(coding.TaskApprovalEnv); inherited != "" {
 				scope, err := s.taskApprovalScope()
 				if err != nil {
@@ -70,14 +86,16 @@ func (a *App) addTasks(root *cobra.Command) {
 				}
 				s.taskEffectsPreapproved = inherited == scope
 			}
-			result, e := s.RunTask(cmd.Context(), args[0], args[1])
+			result, e := s.RunTask(cmd.Context(), args[0], operation)
 			if e != nil {
 				return e
 			}
-			return a.Result(result, fmt.Sprintf("%s/%s exited %d. %s", args[0], args[1], *result.ExitCode, result.Verification))
+			return a.Result(result, "")
 		})
-	}})
-	tasks.AddCommand(&cobra.Command{Use: "stop <task>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	}}
+	run.Flags().BoolVar(&noSummary, "no-summary", false, "Use recorded task feedback without calling a summary model")
+	tasks.AddCommand(run)
+	tasks.AddCommand(&cobra.Command{Use: "stop <task>", Short: "End an exercise and stop services it exclusively owns", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.withSession(cmd.Context(), true, func(s *session) error {
 			if _, ok := s.Manifest.Tasks[args[0]]; !ok {
 				return unknownTask(args[0])
@@ -102,7 +120,7 @@ func (a *App) addTasks(root *cobra.Command) {
 			return a.Result(map[string]string{"task": args[0]}, "Task context ended; its exclusive services were stopped. Shared support services remain owned by the stack.")
 		})
 	}})
-	tasks.AddCommand(&cobra.Command{Use: "status [task]", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	tasks.AddCommand(&cobra.Command{Use: "status [task]", Short: "Inspect recorded operation results and service readiness", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.withSession(cmd.Context(), false, func(s *session) error {
 			filter := ""
 			if len(args) > 0 {
@@ -153,17 +171,25 @@ func (s *session) taskApprovalScope() (string, error) {
 
 func (s *session) RunTask(ctx context.Context, taskID, operation string) (state.Operation, error) {
 	var result state.Operation
+	if ctx.Err() != nil {
+		return result, failure("interrupted", 130, errors.New("task canceled before the operation started"))
+	}
+	s.Redactor = s.Redactor.WithSecrets(config.SecretValues(s.Manifest, s.Values))
 	t, ok := s.Manifest.Tasks[taskID]
 	if !ok {
 		return result, unknownTask(taskID)
 	}
 	op, ok := t.Operations[operation]
 	if !ok {
-		return result, failure("configuration", 2, fmt.Errorf("unknown operation %q for %s", operation, taskID))
+		return result, failure("configuration", 2, fmt.Errorf("unknown operation %q for %s; available operations: %s", operation, taskID, strings.Join(operationNames(t), ", ")))
 	}
 	if op.Mode == "interactive" && (!isTTY(s.App.In) || s.App.JSON) {
 		return result, failure("terminal_required", 2, errors.New("this task operation is interactive; use a terminal without --json"))
 	}
+	displayTask := t
+	displayTask.Name = s.redactAgent(t.Name)
+	fmt.Fprintln(s.App.Err, s.taskFeedback(fmt.Sprintf("Task: %s / %s | %s | stack: %s", taskID, operation, taskTitle(s.Manifest.ID, taskID, displayTask), s.Project.SelectedStack)))
+	fmt.Fprintln(s.App.Err, "Checking configuration, runtime, and task prerequisites...")
 	if e := s.ApproveManifest(); e != nil {
 		return result, e
 	}
@@ -195,7 +221,7 @@ func (s *session) RunTask(ctx context.Context, taskID, operation string) (state.
 		}
 	}
 	if len(op.Effects) > 0 {
-		fmt.Fprint(s.App.Err, s.Redactor.Text(fmt.Sprintf("Operation %s/%s\n  command: %q\n  effects: %s\n", taskID, operation, op.Command, strings.Join(op.Effects, ", "))))
+		fmt.Fprintln(s.App.Err, s.taskFeedback("Effects: "+strings.Join(op.Effects, ", ")))
 	}
 	if approvalEffects(op.Effects) {
 		if s.taskEffectsPreapproved {
@@ -230,6 +256,11 @@ func (s *session) RunTask(ctx context.Context, taskID, operation string) (state.
 		return result, e
 	}
 	defer log.Close()
+	narrator := s.newTaskNarrator(taskID, operation, t, op)
+	narrator.before(ctx)
+	if e := ctx.Err(); e != nil {
+		return result, failure("interrupted", 130, errors.New("task canceled before the operation started"))
+	}
 	result = state.Operation{Task: taskID, Name: operation, StartedAt: time.Now().UTC(), Status: "running", Verification: "Not independently verified.", Log: filepath.ToSlash(logRelative)}
 	s.Project.Stack().Operations[taskID+"/"+operation] = result
 	if e = s.Save(); e != nil {
@@ -239,6 +270,7 @@ func (s *session) RunTask(ctx context.Context, taskID, operation string) (state.
 	if s.App.JSON {
 		output = s.App.Err
 	}
+	fmt.Fprintln(s.App.Err, s.taskFeedback("Running "+taskID+"/"+operation+"..."))
 	tail := &tailWriter{limit: 8192}
 	runResult, runErr := runner.Run(ctx, runner.Request{Argv: runner.Args(s.Root, s.Project.SelectedStack, op.Command), Cwd: directory, Env: env, Stdin: s.App.In, Output: io.MultiWriter(output, log, tail), Redactor: s.Redactor, Interactive: op.Mode == "interactive"})
 	finished := time.Now().UTC()
@@ -249,11 +281,18 @@ func (s *session) RunTask(ctx context.Context, taskID, operation string) (state.
 	if runErr != nil {
 		result.Status = "failed"
 	} else if op.Verification != "" {
-		result.Verification = op.Verification
+		result.Verification = s.Redactor.Text(op.Verification)
 	}
 	s.Project.Stack().Operations[taskID+"/"+operation] = result
 	if e = s.Save(); e != nil {
 		return result, e
+	}
+	if result.OutputTail != "" && !strings.HasSuffix(result.OutputTail, "\n") {
+		fmt.Fprintln(s.App.Err)
+	}
+	narrator.after(ctx, result, runResult.DurationMS)
+	if ctx.Err() != nil {
+		return result, &Error{Kind: "interrupted", Code: 130, ChildExitCode: result.ExitCode, Message: fmt.Sprintf("%s/%s interrupted; the recorded operation status is %s; inspect %s", taskID, operation, result.Status, logRelative)}
 	}
 	if runErr != nil {
 		return result, &Error{Kind: "child_failed", Code: 6, ChildExitCode: &runResult.ExitCode, Message: fmt.Sprintf("%s/%s failed with child exit %d; inspect %s", taskID, operation, runResult.ExitCode, logRelative)}

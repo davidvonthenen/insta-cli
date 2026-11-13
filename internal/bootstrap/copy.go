@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 )
 
-// CopyLab publishes one writable lab copy after prepare has added the tested
-// overlay and initial state. Existing destinations are never merged or replaced.
+// CopyLab publishes one writable lab copy after prepare has validated the
+// repository's lab files and initialized managed state. Existing destinations
+// are never merged or replaced.
 // Source symlinks must remain within this lab; undeclared shared paths fail.
 func CopyLab(snapshot *Snapshot, lab Lab, destination string, prepare func(stage string) error) error {
 	if snapshot == nil || !safeRelative(lab.SourcePath) {

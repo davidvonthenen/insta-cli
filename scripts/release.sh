@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-insta_version="${1:-v0.0.1}"
+insta_version="${1:-v0.0.4}"
 if [[ ! "$insta_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
     echo "Usage: scripts/release.sh vMAJOR.MINOR.PATCH[-suffix]" >&2
     exit 2
